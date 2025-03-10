@@ -17,23 +17,26 @@ limitations under the License.
 package tektonresult
 
 import (
-	"fmt"
 	"path"
-	"testing"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"knative.dev/pkg/ptr"
+	"github.com/aws/smithy-go/ptr"
 
 	mf "github.com/manifestival/manifestival"
-	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
-
-	"gotest.tools/v3/assert"
-
 	"k8s.io/apimachinery/pkg/runtime"
 
+	"encoding/json"
+	"fmt"
+	"reflect"
+	"testing"
+
 	"github.com/tektoncd/operator/pkg/apis/operator/v1alpha1"
+
+	"gotest.tools/v3/assert"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 )
 
 func Test_enablePVCLogging(t *testing.T) {
@@ -225,50 +228,64 @@ func TestUpdateEnvWithSecretName(t *testing.T) {
 	assert.Equal(t, true, containerFound, "container not found")
 }
 
-// TestUpdateStatefulSetReplicasForResultWatcher verifies that the transformer updates
-// the replicas field of a StatefulSet based on the TektonResult's Performance Replicas.
-func TestUpdateStatefulSetReplicasForResultWatcher(t *testing.T) {
-	// Set up a dummy TektonResult with Performance.Replicas set to 3.
-	desiredReplicas := int32(3)
-	tr := &v1alpha1.TektonResult{
+func TestUpdatePerformanceFlagsInDeploymentForResults(t *testing.T) {
+	resultCR := &v1alpha1.TektonResult{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "result",
 			Namespace: "xyz",
 		},
+		Spec: v1alpha1.TektonResultSpec{
+			CommonSpec: v1alpha1.CommonSpec{
+				TargetNamespace: "xyz",
+			},
+			Performance: v1alpha1.PipelinePerformanceProperties{
+				PipelinePerformanceLeaderElectionConfig: v1alpha1.PipelinePerformanceLeaderElectionConfig{
+					Buckets: ptr.Uint(2),
+				},
+				// Deployment performance arguments.
+				PipelineDeploymentPerformanceArgs: v1alpha1.PipelineDeploymentPerformanceArgs{
+					DisableHA: true,
+				},
+				// Replicas value to be applied to the Deployment.
+				Replicas: ptr.Int32(1),
+			},
+		},
 	}
 
-	tr.Spec.Performance.ResultsWatcherStatefulsetOrdinals.Replicas = &desiredReplicas
-	tr.Spec.Performance.ResultsWatcherStatefulsetOrdinals.Enabled = ptr.Bool(true)
+	leaderConfig := "tekton-results-config-leader-election"
+	deploymentName := "tekton-results-watcher"
+	containerName := "tekton-results-watcher"
 
-	// Create a dummy StatefulSet object with an initial replica count of 1.
-	originalReplicas := int32(1)
-	ss := &appsv1.StatefulSet{
+	depInput := &appsv1.Deployment{
 		TypeMeta: metav1.TypeMeta{
-			Kind:       "StatefulSet",
-			APIVersion: "apps/v1",
+			Kind: "Deployment",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "tekton-results-watcher",
-			Namespace: "abc",
+			Name:      deploymentName,
+			Namespace: "xyz",
 		},
-		Spec: appsv1.StatefulSetSpec{
-			Replicas: ptr.Int32(originalReplicas),
+		Spec: appsv1.DeploymentSpec{
+			// Initial replica count.
+			Replicas: ptr.Int32(1),
 			Selector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{
-					"app": "tekton-results-watcher",
-				},
+				MatchLabels: map[string]string{"app": "hello"},
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{
-						"app": "tekton-results-watcher",
+						"app": "hello",
 					},
 				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{
-							Name:  "watcher",
-							Image: "dummy-image",
+							Name:  "dummy",
+							Image: "dummy",
+						},
+						{
+							Name:  containerName,
+							Image: "dummy",
+							Args:  []string{"-flag1", "v1", "-flag2", "v2", "-disable-ha"},
 						},
 					},
 				},
@@ -276,24 +293,38 @@ func TestUpdateStatefulSetReplicasForResultWatcher(t *testing.T) {
 		},
 	}
 
-	// Convert the StatefulSet to an unstructured object.
-	uObj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(ss)
+	depExpected := depInput.DeepCopy()
+	depExpected.Spec.Template.Labels = map[string]string{
+		"app": depInput.Spec.Template.Labels["app"],
+		fmt.Sprintf("%s.data.buckets", leaderConfig): "2",
+		"deployment.spec.replicas":                   "1",
+	}
+	// Expected container args (order based on sorted flag keys).
+	depExpected.Spec.Template.Spec.Containers[1].Args = []string{
+		"-flag1", "v1",
+		"-flag2", "v2",
+		"-disable-ha=true",
+	}
+
+	// Convert the input Deployment to an unstructured object.
+	jsonBytes, err := json.Marshal(depInput)
 	assert.NilError(t, err)
-	u := &unstructured.Unstructured{Object: uObj}
-	u.SetKind("StatefulSet")
-	u.SetAPIVersion("apps/v1")
+	ud := &unstructured.Unstructured{}
+	err = json.Unmarshal(jsonBytes, ud)
+	assert.NilError(t, err)
 
 	// Apply the transformer.
-	transformer := UpdateStatefulSetReplicasForResultWatcher(tr)
-	err = transformer(u)
+	transformer := updatePerformanceFlagsInDeploymentForResultsAndLeaderConfigMap(resultCR, leaderConfig, deploymentName, containerName)
+	err = transformer(ud)
 	assert.NilError(t, err)
 
-	// Convert back to a StatefulSet to check the updated replicas.
-	var ssOut appsv1.StatefulSet
-	err = runtime.DefaultUnstructuredConverter.FromUnstructured(u.Object, &ssOut)
+	// Convert the transformed object back to a typed Deployment.
+	outDep := &appsv1.Deployment{}
+	err = k8sruntime.DefaultUnstructuredConverter.FromUnstructured(ud.Object, outDep)
 	assert.NilError(t, err)
 
-	if ssOut.Spec.Replicas == nil || *ssOut.Spec.Replicas != desiredReplicas {
-		t.Errorf("expected replicas=%d, got %v", desiredReplicas, ssOut.Spec.Replicas)
+	// Compare the transformed Deployment with the expected one.
+	if !reflect.DeepEqual(outDep, depExpected) {
+		t.Errorf("transformed output:\n%+v\nexpected:\n%+v", outDep, depExpected)
 	}
 }

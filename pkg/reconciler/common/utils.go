@@ -19,6 +19,7 @@ package common
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 
 	mf "github.com/manifestival/manifestival"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -71,4 +72,14 @@ func SerializeLabelsToJSON(labels map[string]string) (string, error) {
 		return "", fmt.Errorf("failed to serialize labels to JSON: %v", err)
 	}
 	return string(bytes), nil
+}
+
+// sort keys in an order, to get the consistent hash value in installerset
+func GetSortedKeys(input map[string]interface{}) []string {
+	keys := []string{}
+	for key := range input {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }

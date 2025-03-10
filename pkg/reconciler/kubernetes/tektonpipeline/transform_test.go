@@ -134,7 +134,7 @@ func TestGetSortedKeys(t *testing.T) {
 	}
 	expectedOut := []string{"a1", "a10", "a11", "a2", "a3", "z1"}
 
-	out := getSortedKeys(in)
+	out := common.GetSortedKeys(in)
 	assert.Equal(t, true, reflect.DeepEqual(out, expectedOut))
 }
 

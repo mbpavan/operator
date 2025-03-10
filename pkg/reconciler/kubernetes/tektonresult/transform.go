@@ -58,10 +58,12 @@ const (
 
 	resultAPIDeployment                          = "tekton-results-api"
 	resultWatcherDeployment                      = "tekton-results-watcher"
+	resultWatcherContainer                       = "watcher"
 	tektonResultWatcherName                      = "tekton-results-watcher"
 	tektonResultWatcherServiceName               = "tekton-results-watcher"
 	tektonResultWatcherStatefulServiceName       = "STATEFUL_SERVICE_NAME"
 	tektonResultWatcherStatefulControllerOrdinal = "STATEFUL_CONTROLLER_ORDINAL"
+	tektonResultleaderElectionConfig             = "tekton-results-config-leader-election"
 )
 
 var (
@@ -99,9 +101,11 @@ func (r *Reconciler) transform(ctx context.Context, manifest *mf.Manifest, comp 
 		common.AddStatefulSetRestrictedPSA(),
 		common.DeploymentImages(resultImgs),
 		common.StatefulSetImages(resultImgs),
+		common.AddConfigMapValues(tektonResultleaderElectionConfig, instance.Spec.Performance.PipelinePerformanceLeaderElectionConfig),
+		updatePerformanceFlagsInDeploymentForResultsAndLeaderConfigMap(instance, tektonResultleaderElectionConfig, resultWatcherDeployment, resultWatcherContainer),
 	}
 
-	if instance.Spec.Performance.ResultsWatcherStatefulsetOrdinals.Enabled != nil && *instance.Spec.Performance.ResultsWatcherStatefulsetOrdinals.Enabled {
+	if instance.Spec.Performance.StatefulsetOrdinals != nil && *instance.Spec.Performance.StatefulsetOrdinals {
 		extra = append(extra,
 			common.ConvertDeploymentToStatefulSet(tektonResultWatcherName, tektonResultWatcherServiceName),
 			common.AddStatefulEnvVars(tektonResultWatcherName, tektonResultWatcherServiceName, tektonResultWatcherStatefulServiceName, tektonResultWatcherStatefulControllerOrdinal),
@@ -482,8 +486,8 @@ func UpdateStatefulSetReplicasForResultWatcher(tr *v1alpha1.TektonResult) mf.Tra
 		}
 
 		// Check if the TektonResult Performance.Replicas field is set and greater than 1.
-		if tr.Spec.Performance.ResultsWatcherStatefulsetOrdinals.Replicas != nil && *tr.Spec.Performance.ResultsWatcherStatefulsetOrdinals.Replicas > 1 {
-			ss.Spec.Replicas = tr.Spec.Performance.ResultsWatcherStatefulsetOrdinals.Replicas
+		if tr.Spec.Performance.Replicas != nil && *tr.Spec.Performance.Replicas > 1 {
+			ss.Spec.Replicas = tr.Spec.Performance.Replicas
 		}
 
 		// Convert the updated StatefulSet back to unstructured.
@@ -492,6 +496,106 @@ func UpdateStatefulSetReplicasForResultWatcher(tr *v1alpha1.TektonResult) mf.Tra
 			return fmt.Errorf("failed to convert StatefulSet back to unstructured: %w", err)
 		}
 		u.SetUnstructuredContent(unstrObj)
+		return nil
+	}
+}
+
+// updates performance flags/args into deployment and container given as args
+func updatePerformanceFlagsInDeploymentForResultsAndLeaderConfigMap(resultCR *v1alpha1.TektonResult, leaderConfig, deploymentName, containerName string) mf.Transformer {
+	return func(u *unstructured.Unstructured) error {
+		// Only operate on the target Deployment.
+		if u.GetKind() != "Deployment" || u.GetName() != deploymentName {
+			return nil
+		}
+
+		// Convert the deployment performance arguments to a map.
+		flags := map[string]interface{}{}
+		performanceSpec := resultCR.Spec.Performance
+		if err := common.StructToMap(&performanceSpec.PipelineDeploymentPerformanceArgs, &flags); err != nil {
+			return err
+		}
+		if len(flags) == 0 {
+			return nil
+		}
+
+		// Convert the unstructured object to an apps/v1 Deployment.
+		dep := &appsv1.Deployment{}
+		if err := k8sruntime.DefaultUnstructuredConverter.FromUnstructured(u.Object, dep); err != nil {
+			return err
+		}
+
+		// Convert the leader election config (including the buckets) to a map.
+		leaderElectionConfigMapData := map[string]interface{}{}
+		if err := common.StructToMap(&performanceSpec.PipelinePerformanceLeaderElectionConfig, &leaderElectionConfigMapData); err != nil {
+			return err
+		}
+
+		// If "buckets" is not set and replicas is provided, default it.
+		if _, ok := leaderElectionConfigMapData["buckets"]; !ok && performanceSpec.Replicas != nil {
+			leaderElectionConfigMapData["buckets"] = *performanceSpec.Replicas
+		}
+
+		// Update pod labels with leader election data. This forces a rollout when the buckets (or other keys)
+		// change.
+		podLabels := dep.Spec.Template.Labels
+		if podLabels == nil {
+			podLabels = map[string]string{}
+		}
+		labelKeys := common.GetSortedKeys(leaderElectionConfigMapData)
+		for _, key := range labelKeys {
+			value := leaderElectionConfigMapData[key]
+			labelKey := fmt.Sprintf("%s.data.%s", leaderConfig, key)
+			podLabels[labelKey] = fmt.Sprintf("%v", value)
+		}
+		dep.Spec.Template.Labels = podLabels
+
+		// If replicas are specified in the performance spec, update the Deployment and include the value
+		// in the pod labels.
+		if performanceSpec.Replicas != nil {
+			dep.Spec.Replicas = ptr.Int32(*performanceSpec.Replicas)
+		}
+		if dep.Spec.Replicas != nil {
+			dep.Spec.Template.Labels["deployment.spec.replicas"] = fmt.Sprintf("%d", *dep.Spec.Replicas)
+		}
+
+		// Update performance arguments into the target container.
+		flagKeys := common.GetSortedKeys(flags)
+		for containerIndex, container := range dep.Spec.Template.Spec.Containers {
+			if container.Name != containerName {
+				continue
+			}
+			for _, flagKey := range flagKeys {
+				expectedArg := fmt.Sprintf("-%s", flagKey)
+				argStringValue := fmt.Sprintf("%v", flags[flagKey])
+
+				// skip deprecated disable-ha flag if not resultwatcherControllerDeployment
+				// should be removed when the flag is removed from result watcher controller
+				if deploymentName != resultWatcherDeployment && flagKey == "disable-ha" {
+					continue
+				}
+
+				argUpdated := false
+				for argIndex, existingArg := range container.Args {
+					if strings.HasPrefix(existingArg, expectedArg) {
+						container.Args[argIndex] = fmt.Sprintf("%s=%s", expectedArg, argStringValue)
+						argUpdated = true
+						break
+					}
+				}
+				if !argUpdated {
+					container.Args = append(container.Args, fmt.Sprintf("%s=%s", expectedArg, argStringValue))
+				}
+			}
+			dep.Spec.Template.Spec.Containers[containerIndex] = container
+		}
+
+		// Convert the updated Deployment back into an unstructured object.
+		obj, err := k8sruntime.DefaultUnstructuredConverter.ToUnstructured(dep)
+		if err != nil {
+			return err
+		}
+		u.SetUnstructuredContent(obj)
+
 		return nil
 	}
 }

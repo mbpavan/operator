@@ -155,7 +155,7 @@ func updatePerformanceFlagsInDeploymentAndLeaderConfigMap(pipelineCR *v1alpha1.T
 			podLabels = map[string]string{}
 		}
 		// sort data keys in an order, to get the consistent hash value in installerset
-		labelKeys := getSortedKeys(leaderElectionConfigMapData)
+		labelKeys := common.GetSortedKeys(leaderElectionConfigMapData)
 		for _, key := range labelKeys {
 			value := leaderElectionConfigMapData[key]
 			labelKey := fmt.Sprintf("%s.data.%s", leaderConfig, key)
@@ -174,7 +174,7 @@ func updatePerformanceFlagsInDeploymentAndLeaderConfigMap(pipelineCR *v1alpha1.T
 		}
 
 		// sort flag keys in an order, to get the consistent hash value in installerset
-		flagKeys := getSortedKeys(flags)
+		flagKeys := common.GetSortedKeys(flags)
 		// update performance arguments into target container
 		for containerIndex, container := range dep.Spec.Template.Spec.Containers {
 			if container.Name != containerName {
@@ -292,14 +292,4 @@ func updateResolverConfigEnvironmentsInDeployment(pipelineCR *v1alpha1.TektonPip
 
 		return nil
 	}
-}
-
-// sort keys in an order, to get the consistent hash value in installerset
-func getSortedKeys(input map[string]interface{}) []string {
-	keys := []string{}
-	for key := range input {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }
