@@ -19,12 +19,15 @@ package tektonconfig
 import (
 	"context"
 	"fmt"
+	pkgreconciler "knative.dev/pkg/reconciler"
 
 	mf "github.com/manifestival/manifestival"
+	//configv1 "github.com/openshift/api/config/v1"
 	"github.com/tektoncd/operator/pkg/apis/operator/v1alpha1"
 	clientset "github.com/tektoncd/operator/pkg/client/clientset/versioned"
 	tektonConfigreconciler "github.com/tektoncd/operator/pkg/client/injection/reconciler/operator/v1alpha1/tektonconfig"
 	"github.com/tektoncd/operator/pkg/reconciler/common"
+	//"github.com/tektoncd/operator/pkg/reconciler/shared/tektonconfig"
 	"github.com/tektoncd/operator/pkg/reconciler/shared/tektonconfig/chain"
 	"github.com/tektoncd/operator/pkg/reconciler/shared/tektonconfig/pipeline"
 	"github.com/tektoncd/operator/pkg/reconciler/shared/tektonconfig/pruner"
@@ -35,7 +38,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"knative.dev/pkg/apis"
 	"knative.dev/pkg/logging"
-	pkgreconciler "knative.dev/pkg/reconciler"
+	//"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // Reconciler implements controller.Reconciler for TektonConfig resources.
@@ -122,6 +125,46 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, tc *v1alpha1.TektonConfi
 		tc.Status.MarkNotReady(msg)
 		return nil
 	}
+
+	ns, err := r.kubeClientSet.CoreV1().Namespaces().Get(ctx, tc.Spec.TargetNamespace, metav1.GetOptions{})
+	if err != nil {
+		logging.FromContext(ctx).Errorw("cannot fetch namespace for proxy check", "namespace", tc.Spec.TargetNamespace, "error", err)
+		return err
+	}
+	if ns.Labels["operator.tekton.dev/disable-proxy"] == "true" {
+		logging.FromContext(ctx).Infow("skipping proxy-transformer; namespace opted out", "namespace", ns.Name)
+	} else {
+		// 2. Purely mutate the TektonConfig
+		ProxyTransformer(tc)
+
+		// 3. Persist any spec changes
+		updated, err := r.operatorClientSet.OperatorV1alpha1().
+			TektonConfigs().
+			Update(ctx, tc, metav1.UpdateOptions{})
+		if err != nil {
+			logging.FromContext(ctx).Errorw("failed to update TektonConfig after proxy injection", "error", err)
+			return err
+		}
+		tc = updated
+	}
+
+	// ───────────────────────────────────────────────────────
+	// 1. INJECT PROXY INTO THE SPEC (if HTTP_PROXY/HTTPS_PROXY/NO_PROXY are set)
+	// ───────────────────────────────────────────────────────
+	ProxyTransformer(tc)
+
+	// 2. PERSIST THE SPEC CHANGE
+	//    We have mutated tc.Spec.Pipeline.DefaultPodTemplate in memory; now write it.
+	//updated, err := r.operatorClientSet.OperatorV1alpha1().
+	//    TektonConfigs().
+	//    Update(ctx, tc, metav1.UpdateOptions{})
+	//if err != nil {
+	//    logger.Errorw("Failed to update TektonConfig after injecting proxy", "error", err)
+	//    // Return the error so that the reconciliation requeues
+	//    return err
+	//}
+	//// Use the updated object for the remainder of reconciliation
+	//tc = updated
 
 	// run pre upgrade
 	if err := r.upgrade.RunPreUpgrade(ctx); err != nil {
@@ -308,6 +351,15 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, tc *v1alpha1.TektonConfi
 	}
 	logger.Debug("TektonConfig status updated successfully")
 
+	// Only inject proxy settings on OpenShift (when the cluster Proxy CR is present)
+	//	ProxyTransformer(tc)
+	// Persist the spec change so that defaultPodTemplate actually appears on the CR
+	//if _, err := r.operatorClientSet.OperatorV1alpha1().
+	//    TektonConfigs().
+	//    Update(ctx, tc, metav1.UpdateOptions{}); err != nil {
+	//  logger.Errorw("Failed to update TektonConfig after injecting proxy", "error", err)
+	//  return err
+	//}
 	// run post upgrade
 	if err := r.upgrade.RunPostUpgrade(ctx); err != nil {
 		logger.Errorw("Post-upgrade failed", "error", err)
