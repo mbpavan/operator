@@ -58,6 +58,26 @@ func (oe kubernetesExtension) PostReconcile(ctx context.Context, comp v1alpha1.T
 		return extension.EnsureTektonDashboardCRNotExists(ctx, oe.operatorClientSet.OperatorV1alpha1().TektonDashboards())
 	}
 
+	// ──────────────────────────────────────────────
+	// Pipelines-as-Code: seed the CR on *all* platforms
+	//cfg := comp.(*v1alpha1.TektonConfig)
+	//pac := cfg.Spec.Platforms.OpenShift.PipelinesAsCode
+	//if pac != nil && *pac.Enable {
+	//	// Note: operatorVersion is the same string you pass into the OCP extension.
+	//	// If you have it in scope use that; otherwise use cfg.Status.AppliedVersion
+	//	// or hard‑code a version string.
+	//	operatorVersion := cfg.Status.AppliedVersion
+	//	if _, err := extension.EnsureOpenShiftPipelinesAsCodeExists(
+	//		ctx,
+	//		oe.operatorClientSet.OperatorV1alpha1().OpenShiftPipelinesAsCodes(),
+	//		cfg,
+	//		operatorVersion,
+	//	); err != nil {
+	//		cfg.Status.MarkComponentNotReady(fmt.Sprintf("PipelinesAsCode: %s", err))
+	//		return v1alpha1.REQUEUE_EVENT_AFTER
+	//	}
+	//}
+
 	return nil
 }
 func (oe kubernetesExtension) Finalize(ctx context.Context, comp v1alpha1.TektonComponent) error {

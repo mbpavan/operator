@@ -27,14 +27,16 @@ import (
 	k8sTektonPruner "github.com/tektoncd/operator/pkg/reconciler/kubernetes/tektonpruner"
 	k8sResult "github.com/tektoncd/operator/pkg/reconciler/kubernetes/tektonresult"
 	k8sTrigger "github.com/tektoncd/operator/pkg/reconciler/kubernetes/tektontrigger"
+	"github.com/tektoncd/operator/pkg/reconciler/openshift/openshiftpipelinesascode"
 	"github.com/tektoncd/operator/pkg/reconciler/platform"
 	"knative.dev/pkg/injection"
 )
 
 const (
-	ControllerTektonDashboard platform.ControllerName = "tektondashboard"
-	ControllerTektonResults   platform.ControllerName = "tektonresult"
-	PlatformNameKubernetes    string                  = "kubernetes"
+	ControllerTektonDashboard          platform.ControllerName = "tektondashboard"
+	ControllerTektonResults            platform.ControllerName = "tektonresult"
+	ControllerOpenShiftPipelinesAsCode platform.ControllerName = "openshiftpipelinesascode"
+	PlatformNameKubernetes             string                  = "kubernetes"
 )
 
 var (
@@ -74,5 +76,9 @@ var (
 		ControllerTektonResults: injection.NamedControllerConstructor{
 			Name:                  string(ControllerTektonResults),
 			ControllerConstructor: k8sResult.NewController},
+		ControllerOpenShiftPipelinesAsCode: injection.NamedControllerConstructor{
+			Name:                  string(ControllerOpenShiftPipelinesAsCode),
+			ControllerConstructor: openshiftpipelinesascode.NewController,
+		},
 	}
 )

@@ -388,11 +388,12 @@ main() {
     # get release YAML for Dashboard
     release_yaml dashboard release-full 00-dashboard ${d_version}
     release_yaml dashboard release 00-dashboard ${d_version}
-  else
-    pac_version=$(go run ./cmd/tool component-version ${CONFIG} pipelines-as-code)
-    release_yaml_pac pipelinesascode release ${pac_version}
-    fetch_openshift_addon_tasks
   fi
+
+  # Pipelines-as-Code on both Kubernetes and OpenShift
+  pac_version=$(go run ./cmd/tool component-version ${CONFIG} pipelines-as-code)
+  release_yaml_pac pipelinesascode release ${pac_version}
+  fetch_openshift_addon_tasks
 
   hub_version=$(go run ./cmd/tool component-version ${CONFIG} hub)
   release_yaml_hub hub ${hub_version}

@@ -34,6 +34,15 @@ func (tc *TektonConfig) SetDefaults(ctx context.Context) {
 	tc.Spec.Result.setDefaults()
 	tc.Spec.TektonPruner.SetDefaults()
 
+	// Always default PAC to enabled unless explicitly disabled via .spec.addon.enablePAC
+	if tc.Spec.Platforms.OpenShift.PipelinesAsCode == nil {
+		tc.Spec.Platforms.OpenShift.PipelinesAsCode = &PipelinesAsCode{Enable: ptr.Bool(true)}
+	}
+	if tc.Spec.Addon.EnablePAC != nil && !*tc.Spec.Addon.EnablePAC {
+		tc.Spec.Platforms.OpenShift.PipelinesAsCode.Enable = ptr.Bool(false)
+	}
+	setAddonDefaults(&tc.Spec.Addon)
+
 	if IsOpenShiftPlatform() {
 		if tc.Spec.Platforms.OpenShift.PipelinesAsCode == nil {
 			tc.Spec.Platforms.OpenShift.PipelinesAsCode = &PipelinesAsCode{
