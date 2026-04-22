@@ -111,7 +111,7 @@ spec:
       name: v1alpha1
       schema:
         openAPIV3Schema:
-          description: Schema for the tektonaddons API. Supported on OpenShift only.
+          description: Schema for the tektonaddons API
           type: object
           x-kubernetes-preserve-unknown-fields: true
       served: true
@@ -184,7 +184,7 @@ spec:
         - jsonPath: .status.conditions[?(@.type=="Ready")].message
           name: Reason
           type: string
-      name: v1alpha1
+      name: v1beta1
       schema:
         openAPIV3Schema:
           description: Schema for the tektonconfigs API
@@ -192,6 +192,26 @@ spec:
           x-kubernetes-preserve-unknown-fields: true
       served: true
       storage: true
+      subresources:
+        status: {}
+    - additionalPrinterColumns:
+        - jsonPath: .status.version
+          name: Version
+          type: string
+        - jsonPath: .status.conditions[?(@.type=="Ready")].status
+          name: Ready
+          type: string
+        - jsonPath: .status.conditions[?(@.type=="Ready")].message
+          name: Reason
+          type: string
+      name: v1alpha1
+      schema:
+        openAPIV3Schema:
+          description: Schema for the tektonconfigs API
+          type: object
+          x-kubernetes-preserve-unknown-fields: true
+      served: true
+      storage: false
       subresources:
         status: {}
 ---

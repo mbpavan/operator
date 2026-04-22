@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-apiVersion: operator.tekton.dev/v1alpha1
+apiVersion: operator.tekton.dev/v1beta1
 kind: TektonConfig
 metadata:
   name: config

@@ -29,9 +29,29 @@ spec:
   preserveUnknownFields: false
   scope: Cluster
   versions:
-  - name: v1alpha1
+  - name: v1beta1
     served: true
     storage: true
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - jsonPath: .status.version
+      name: Version
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].message
+      name: Reason
+      type: string
+    schema:
+      openAPIV3Schema:
+        type: object
+        description: Schema for the tektonconfigs API
+        x-kubernetes-preserve-unknown-fields: true
+  - name: v1alpha1
+    served: true
+    storage: false
     subresources:
       status: {}
     additionalPrinterColumns:

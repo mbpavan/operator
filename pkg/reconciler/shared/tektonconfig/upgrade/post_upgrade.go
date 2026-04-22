@@ -45,6 +45,9 @@ func upgradeStorageVersion(ctx context.Context, logger *zap.SugaredLogger, k8sCl
 	// resources to be upgraded
 	crdGroups := []string{
 
+		// Tekton operator (cluster-scoped); migrate stored objects to v1beta1 after CRD upgrade
+		"tektonconfigs.operator.tekton.dev",
+
 		// dashboard
 		"extensions.dashboard.tekton.dev",
 
